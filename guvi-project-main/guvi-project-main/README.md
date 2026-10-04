@@ -1,135 +1,201 @@
-# ⚖️ Contract Analysis Bot
+# ⚖️ Contract Analysis & Risk Assessment Bot (LexGuard AI)
 
-An AI-powered legal contract review assistant built with **Streamlit**, **Google Gemini** (via the official `google-genai` SDK), **ChromaDB**, and **pypdf**.
-
-Upload any contract PDF (NDAs, MSAs, vendor agreements, leases) and ask questions in natural language. The system retrieves the exact clauses using semantic vector search and provides:
-1. **Verbatim clause quote with page citations**
-2. **Plain English translation**
-3. **Risk level (🟢 Low / 🟡 Medium / 🔴 High) with practical business justification**
-4. **Anti-hallucination guardrail ("Not found in the contract" when missing)**
-5. **1-Click 5-Pillar Comprehensive Risk Scorecard**
+> **Built by [Bhuvana Manogar](https://github.com/Bhuvana-Manogar)**  
+> *An AI-powered legal contract review platform built with Python, Streamlit, Google Gemini (via `google-genai`), and ChromaDB.*
 
 ---
 
-## 🏛️ The 5-Stage RAG Pipeline
-
-```
-┌─────────────────┐       ┌────────────────────────┐       ┌──────────────────────────┐
-│ 1. User Uploads │ ----> │ 2. Text Extraction &   │ ----> │ 3. Gemini Embeddings     │
-│    Contract PDF │       │    Overlapping Chunks  │       │    (gemini-embedding-001)│
-└─────────────────┘       │    (~800 chars, pypdf) │       └────────────┬─────────────┘
-                          └────────────────────────┘                    │
-                                                                        ▼
-┌─────────────────┐       ┌────────────────────────┐       ┌──────────────────────────┐
-│ 5. Gemini 2.5   │ <---- │ User Question + Top 4  │ <---- │ 4. ChromaDB Vector Store │
-│    Risk Rating  │       │ Relevant Chunks        │       │    (Cosine Similarity)   │
-└─────────────────┘       └────────────────────────┘       └──────────────────────────┘
-```
-
-1. **Document Ingestion**: The user uploads a contract PDF. Text is extracted page-by-page using `pypdf`.
-2. **Clause-Aware Chunking**: Text is split into overlapping chunks (~800 characters, 150 character overlap) with boundary snapping to preserve complete clauses and sentence structure. Page numbers are captured as metadata.
-3. **Vector Embeddings**: Each chunk is embedded into a dense 3072-dimensional semantic vector using Google's `gemini-embedding-001` via the `google-genai` SDK.
-4. **Vector Storage**: Embeddings and metadata are indexed in an in-memory / local ChromaDB collection using cosine similarity.
-5. **Retrieval & Grounded Reasoning**: When a question is asked (e.g. *"Is there a termination clause?"*), ChromaDB retrieves the top 4 most relevant chunks. Gemini analyzes them using a strictly grounded prompt to quote verbatim text, explain in plain English, and score legal risk.
+## 📖 Table of Contents
+- [Why I Built This Project](#-why-i-built-this-project)
+- [How I Built It (The 5-Stage Architecture)](#-how-i-built-it-the-5-stage-architecture)
+- [Key Features](#-key-features)
+- [Technical Stack](#-technical-stack)
+- [Challenges I Overcame & Design Decisions](#-challenges-i-overcame--design-decisions)
+- [How to Set Up and Run](#-how-to-set-up-and-run)
+- [Sample Demo Queries & Expected Results](#-sample-demo-queries--expected-results)
+- [Project Structure](#-project-structure)
+- [Legal Disclaimer](#-legal-disclaimer)
 
 ---
 
-## 🚀 Quickstart Guide
+## 💡 Why I Built This Project
 
-### 1. Prerequisites
-- Python 3.10+ (Tested on Python 3.11)
-- A Gemini API Key ([Get a free key from Google AI Studio](https://aistudio.google.com/app/apikey))
+Reviewing enterprise contracts (such as Master Services Agreements, NDAs, vendor terms, and employment contracts) is tedious, time-consuming, and prone to human error:
+- Traditional keyword search (*Ctrl+F*) frequently fails because legal drafters use varied terminology (e.g., searching for "cancel" misses "termination for convenience").
+- Generic large language models (LLMs) hallucinate clauses or assume standard terms that aren't actually present in the specific contract.
+- Business stakeholders need quick, plain-English explanations and actionable risk levels (Low / Medium / High) without waiting days for preliminary legal review.
 
-### 2. Installation
+To solve this, I designed and developed **LexGuard AI** — a specialized Retrieval-Augmented Generation (RAG) assistant that extracts exact clauses from contract PDFs, evaluates business risk, and enforces strict grounding to eliminate hallucinations.
 
-Clone or open the project folder in your terminal:
+---
 
+## 🏛️ How I Built It (The 5-Stage Architecture)
+
+I structured the application into an end-to-end 5-stage pipeline:
+
+```
+┌────────────────────────┐
+│  1. PDF Ingestion      │ ──> High-fidelity extraction using pypdf with page tracking
+└──────────┬─────────────┘
+           │
+           ▼
+┌────────────────────────┐
+│  2. Smart Chunking     │ ──> ~800-character overlapping sliding window (150-char overlap)
+└──────────┬─────────────┘     with sentence boundary snapping so clauses are never severed
+           │
+           ▼
+┌────────────────────────┐
+│  3. Gemini Embeddings  │ ──> 3072-dimensional vector embeddings via google-genai SDK
+└──────────┬─────────────┘     (gemini-embedding-001)
+           │
+           ▼
+┌────────────────────────┐
+│  4. ChromaDB Storage   │ ──> In-memory vector database indexed with Cosine similarity (HNSW)
+└──────────┬─────────────┘
+           │
+           ▼
+┌────────────────────────┐
+│  5. Grounded Analysis  │ ──> Gemini 2.5 Flash with strict RAG prompt:
+└────────────────────────┘     1. Verbatim quote with page citation
+                               2. Plain English explanation
+                               3. Risk rating (🟢 Low / 🟡 Medium / 🔴 High)
+                               4. Strict "Not found in contract" anti-hallucination guardrail
+```
+
+### Detailed Breakdown of Each Stage:
+
+1. **Stage 1 — PDF Ingestion (`pypdf`)**:
+   I implemented `extract_text_chunks_from_pdf` to extract clean text while attaching page numbers as metadata to every chunk. This ensures full citation traceability back to the original document page.
+
+2. **Stage 2 — Clause-Aware Chunking**:
+   Fixed-size splitting often cuts legal sentences in half. I implemented an overlapping sliding window (~800 characters with 150-character overlap) that searches backwards for the nearest sentence period (`. `) or word boundary.
+
+3. **Stage 3 — Semantic Embeddings (`google-genai`)**:
+   I integrated Google's official new `google-genai` Python SDK using `gemini-embedding-001` to transform every contract clause into a high-dimensional (3072-dim) vector representing its semantic meaning.
+
+4. **Stage 4 — Vector Indexing (`ChromaDB`)**:
+   I chose ChromaDB because it requires zero server setup and delivers sub-millisecond retrieval. I configured the collection to use Cosine similarity space (`{"hnsw:space": "cosine"}`) to calculate similarity match percentages.
+
+5. **Stage 5 — Prompt Engineering & Risk Reasoning (`Gemini 2.5 Flash`)**:
+   I designed a comprehensive legal prompt with few-shot structure. It instructs Gemini to act as a corporate legal analyst, answer solely from retrieved excerpts, quote verbatim clauses, translate them into plain English, and classify risk:
+   - 🔴 **High Risk**: Uncapped liability, unilateral termination without notice, onerous non-compete.
+   - 🟡 **Medium Risk**: Standard but asymmetric terms, 30-day notice, typical indemnifications.
+   - 🟢 **Low Risk**: Mutual obligations, standard boilerplate, standard payment terms.
+   - ⚪ **Not Found**: Triggered when the clause does not exist in the contract, preventing hallucinations.
+
+---
+
+## ✨ Key Features
+
+- **Intuitive Web UI**: Built with Streamlit featuring a clean SaaS layout (LexGuard AI branding, document status badges, and responsive tabs).
+- **Instant Clause Quick-Action Chips**: One-click audit buttons for common inquiries:
+  - *Termination Notice*
+  - *Liability Caps & Damage Waivers*
+  - *Payment Terms & Late Penalties*
+  - *Confidentiality Survival Period*
+  - *Intellectual Property Rights*
+  - *Non-Solicitation Restrictions*
+  - *Governing Law & Jurisdiction*
+  - *Anti-Hallucination Test*
+- **Executive Risk Scorecard**: A 1-click comprehensive audit that evaluates all 5 key legal pillars and presents a summary scorecard (counts of High, Medium, and Low risk items).
+- **Source Grounding Transparency**: Expandable view showing the exact ChromaDB chunks, page numbers, and cosine similarity match percentages.
+- **Pre-Built Test Contract**: Includes a realistic 3-page Master Services Agreement (MSA) & NDA in `sample_contracts/` so anyone can test the system with 1 click.
+- **Secure Key Handling**: Loads `GEMINI_API_KEY` from `.env` using `python-dotenv` and protects it from Git via `.gitignore`.
+
+---
+
+## 🛠️ Technical Stack
+
+| Component | Technology | Rationale |
+| :--- | :--- | :--- |
+| **Frontend UI** | Streamlit | Rapid, reactive Python web UI with custom modern CSS styling |
+| **LLM Reasoning** | Google Gemini 2.5 Flash | High-speed, high-reasoning multimodal model for contract clause extraction |
+| **Embeddings** | Gemini `gemini-embedding-001` | 3072-dimensional vector embeddings via `google-genai` SDK |
+| **Vector Database** | ChromaDB | Lightweight, embedded vector store with native HNSW cosine indexing |
+| **PDF Extraction** | `pypdf` | Fast, dependency-free text extraction with page metadata tracking |
+| **PDF Generation** | `reportlab` | Generates realistic sample test contracts for instant evaluation |
+| **Environment** | `python-dotenv` | Clean, secure API key configuration |
+
+---
+
+## 🧠 Challenges I Overcame & Design Decisions
+
+1. **Eliminating LLM Hallucinations**:  
+   *Challenge*: LLMs often provide generic legal answers even when a clause is absent.  
+   *Solution*: I enforced a strict system prompt constraint that forces the model to verify retrieved chunks and explicitly output *"Not found in the contract"* with a ⚪ *Not Found* risk badge whenever the topic isn't mentioned in the text.
+
+2. **Resolving Streamlit UI State & Nested Expander Exceptions**:  
+   *Challenge*: Streamlit's `st.status()` container is implemented internally as an expander, which caused runtime crashes when nested inside other expanders.  
+   *Solution*: I re-architected the layout into clean, top-level status components and wrapped the Q&A input inside an `st.form` so queries submit smoothly whether the user presses Enter or clicks the button.
+
+3. **Handling Model Compatibility in `google-genai`**:  
+   *Challenge*: The legacy `text-embedding-004` model name returned 404 in the current SDK endpoint.  
+   *Solution*: I inspected available models using `client.models.list()`, identified `gemini-embedding-001` (3072 dimensions), and adapted the pipeline to use the latest supported model seamlessly.
+
+---
+
+## 🚀 How to Set Up and Run
+
+### 1. Clone the Repository
 ```bash
-cd C:\Users\admin\.gemini\antigravity\scratch\contract-analysis-bot
+git clone https://github.com/Bhuvana-Manogar/Contract-Analysis-Risk-Assessment-Bot.git
+cd Contract-Analysis-Risk-Assessment-Bot/guvi-project-main/guvi-project-main
 ```
 
-Install the dependencies:
-
+### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Your API Key
-
-Create a `.env` file in the project root:
-
+### 3. Configure Your Gemini API Key
+Create a `.env` file in the project folder:
 ```bash
 cp .env.example .env
 ```
-
-Open `.env` and add your API key:
-
+Add your key inside `.env`:
 ```env
 GEMINI_API_KEY=your_actual_gemini_api_key_here
 ```
-
-*(Note: You can also enter or override your API key directly in the Streamlit sidebar UI).*
+*(Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey))*.
 
 ### 4. Launch the App
-
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
-*(Or on Windows if `streamlit` is not in your PATH: `python -m streamlit run app.py`)*
-
-The web app will open automatically in your browser at `http://localhost:8501`.
+Open **`http://localhost:8501`** in your browser.
 
 ---
 
-## 🧪 Testing with the Built-In Sample Contract
+## 🎯 Sample Demo Queries & Expected Results
 
-A realistic **Master Professional Services Agreement (MSA) & NDA** is included in `sample_contracts/sample_service_agreement.pdf`.
+Using the built-in sample contract (`sample_contracts/sample_service_agreement.pdf`):
 
-To test instantly:
-1. Open the app in your browser.
-2. In the sidebar, click **"📑 Load Sample Service Agreement"**.
-3. Try any of the 3 demo queries below or click **"🚀 Run Comprehensive Risk Audit"** under the **Risk Scorecard** tab!
-
-### 🎯 3 Demo Questions to Show Hackathon Judges:
-
-| Query | Expected Risk | What to Look For |
+| Query | Expected Risk | What the Model Identifies |
 | :--- | :---: | :--- |
-| **"Is there a termination clause and what notice is required?"** | 🟡 **Medium** | Quoting Section 3 (14-day notice for Client, 60-day notice for Service Provider). Asymmetry creates moderate risk. |
-| **"What is the liability cap and what damages are excluded?"** | 🔴 **High** | Quoting Section 6. Liability cap is limited to only 3 months of fees, and Service Provider indemnification is uncapped. Significant exposure! |
-| **"What are the confidentiality obligations and survival period?"** | 🟢 **Low** | Quoting Section 4. Standard mutual confidentiality obligations surviving 5 years, with standard carve-outs. |
-| **"Is there an international maritime shipping clause?"** | ⚪ **Not Found** | Prompt correctly states **"Not found in the contract"** without hallucinating! |
-
----
-
-## 💡 Hackathon Cheatsheet & Presentation Tips
-
-### Q: What are embeddings and why are they needed?
-> **Answer**: *Embeddings convert unstructured text into multi-dimensional numerical vectors (768 dimensions in Gemini `text-embedding-004`). In this vector space, texts with similar meanings are close together. Unlike keyword search (which fails if the contract says "cancel" instead of "terminate"), embeddings capture semantic intent.*
-
-### Q: Why does RAG reduce hallucination?
-> **Answer**: *Standard LLMs generate text based solely on their internal training weights. In legal documents, this often leads to hallucinating terms that sound plausible but don't exist. RAG grounds the LLM strictly on retrieved excerpts and enforces that if the clause is missing, it outputs "Not found in the contract".*
-
-### Q: Why use ChromaDB?
-> **Answer**: *ChromaDB is a lightweight, embedded vector database. It requires zero server setup, runs completely in-memory or persisted locally, supports HNSW vector indexing, and integrates seamlessly with Python.*
+| **"What is the limitation of liability and what damages are excluded?"** | 🔴 **High Risk** | Cites Section 6. Flags that client liability is capped at only 3 months of fees, while service provider indemnification remains completely uncapped. |
+| **"Is there a termination clause and what notice is required?"** | 🟡 **Medium Risk** | Cites Section 3. Flags asymmetrical notice: 14 days for Client vs 60 days for Service Provider. |
+| **"What are the confidentiality obligations and survival period?"** | 🟢 **Low Risk** | Cites Section 4. Confirms standard mutual obligations surviving 5 years with standard exceptions. |
+| **"What are the maritime shipping terms?"** | ⚪ **Not Found** | Accurately identifies that maritime shipping is absent from the contract without hallucinating. |
 
 ---
 
 ## 📁 Project Structure
 
 ```
-contract-analysis-bot/
+guvi-project-main/guvi-project-main/
 ├── app.py                     # Streamlit frontend & interactive dashboard
-├── rag_pipeline.py            # Extraction, chunking, embeddings, ChromaDB, & Gemini analysis
-├── generate_sample_pdf.py     # Script to generate realistic sample MSA & NDA contract
+├── rag_pipeline.py            # PDF text extraction, chunking, embeddings, ChromaDB, & Gemini analysis
+├── generate_sample_pdf.py     # Script to generate realistic test contracts
 ├── sample_contracts/
 │   └── sample_service_agreement.pdf # Pre-built 3-page test agreement
 ├── requirements.txt           # Project dependencies
 ├── .env.example               # Template for environment variables
 ├── .gitignore                 # Prevents committing API keys
-└── README.md                  # Documentation and pitch guide
+└── README.md                  # Complete project documentation & build journey
 ```
 
 ---
 
-## ⚠️ Legal Disclaimer
-*This tool is an AI assistant intended solely for educational, informational, and triage purposes. It does not constitute formal legal advice. Always consult a qualified attorney for legal matters.*
+## ⚖️ Legal Disclaimer
+
+*This application is an automated AI research and contract triage tool. It does not provide legal advice. All analyses, risk ratings, and extracted terms must be verified by a qualified attorney.*
