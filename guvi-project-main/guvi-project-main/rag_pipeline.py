@@ -18,7 +18,8 @@ from google import genai
 from google.genai import types
 
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
-DEFAULT_GENAI_MODEL = "gemini-2.5-flash"
+DEFAULT_GENAI_MODEL = "gemini-3-flash-preview"
+FALLBACK_GENAI_MODELS = ["gemini-3-flash-preview", "gemini-3.5-flash", "gemini-2.5-flash"]
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 150
 
@@ -288,9 +289,22 @@ Either party may cancel the contract at any time for any reason by providing 30 
 - Confirm prorated payment applies for work done prior to termination.
 """
 
-    chat = client.chats.create(model=model_name)
-    response = chat.send_message(prompt)
-    raw_text = response.text or ""
+    candidate_models = [model_name] + [m for m in FALLBACK_GENAI_MODELS if m != model_name]
+    raw_text = ""
+    last_err = None
+    for candidate in candidate_models:
+        try:
+            chat = client.chats.create(model=candidate)
+            response = chat.send_message(prompt)
+            raw_text = response.text or ""
+            if raw_text:
+                break
+        except Exception as err:
+            last_err = err
+            continue
+
+    if not raw_text and last_err:
+        raise last_err
 
     parsed = parse_ai_response(raw_text)
 
